@@ -17,9 +17,9 @@ CLIENT_SECRETS_FILE = "client_secrets.json"
 
 # This OAuth 2.0 access scope allows for full read/write access to the
 # authenticated user's account and requires requests to use an SSL connection.
-SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly']
-API_SERVICE_NAME = 'drive'
-API_VERSION = 'v2'
+SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly', 'https://www.googleapis.com/auth/drive.metadata.readonly']
+API_SERVICE_NAME = 'searchconsole'
+API_VERSION = 'v1'
 
 app = flask.Flask(__name__)
 # Note: A secret key is included in the sample so that it works.
@@ -41,18 +41,43 @@ def test_api_request():
   # Load credentials from the session.
   credentials = google.oauth2.credentials.Credentials(
       **flask.session['credentials'])
-  
-  drive = googleapiclient.discovery.build(
-      API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
-  files = drive.files().list().execute()
+  # Retrieve list of properties in account
+  search_console_service = googleapiclient.discovery.build(
+      API_SERVICE_NAME, API_VERSION, credentials=credentials)
+  site_list = search_console_service.sites().list().execute()
+
+  if len(site_list) == 0:
+    return '<p>No sites found.</p>'
+
+  # Filter for verified URL-prefix websites.
+  verified_sites_urls = [s['siteUrl'] for s in site_list['siteEntry']
+                        if s['permissionLevel'] != 'siteUnverifiedUser'
+                        and s['siteUrl'].startswith('http')]
+
+  # Print the sitemaps for all websites that you can access.
+  results = '<!DOCTYPE html><html><body><table><tr><th>Verified site</th><th>Sitemaps</th></tr>'
+  for site_url in verified_sites_urls:
+
+    # Retrieve list of sitemaps submitted
+    sitemaps = search_console_service.sitemaps().list(siteUrl=site_url).execute()
+    results += '<tr><td>%s</td>' % (site_url)
+
+    # Add a row with the site and the list of sitemaps
+    if 'sitemap' in sitemaps:
+      sitemap_list = "<br />".join([s['path'] for s in sitemaps['sitemap']])
+    else:
+      sitemap_list = "<i>None</i>"
+    results += '<td>%s</td></tr>' % (sitemap_list)
+
+  results += '</table></body></html>'
 
   # Save credentials back to session in case access token was refreshed.
   # ACTION ITEM: In a production app, you likely want to save these
   #              credentials in a persistent database instead.
   flask.session['credentials'] = credentials_to_dict(credentials)
 
-  return flask.jsonify(**files)
+  return results
 
 
 @app.route('/authorize')
@@ -132,12 +157,14 @@ def clear_credentials():
 
 
 def credentials_to_dict(credentials):
-  return {'token': credentials.token,
+  cred_dict = {'token': credentials.token,
           'refresh_token': credentials.refresh_token,
           'token_uri': credentials.token_uri,
           'client_id': credentials.client_id,
           'client_secret': credentials.client_secret,
           'scopes': credentials.scopes}
+    
+  return cred_dict
 
 def print_index_table():
   return ('<table>' +
